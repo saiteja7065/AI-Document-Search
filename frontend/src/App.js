@@ -10,6 +10,7 @@ import Search from './pages/Search';
 import DocumentViewer from './pages/DocumentViewer';
 import Upload from './pages/Upload';
 import AdminDashboard from './pages/AdminDashboard';
+import Tags from './pages/Tags';
 
 // Create theme
 const theme = createTheme({
@@ -119,6 +120,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <AdminDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/tags"
+              element={
+                <ProtectedRoute>
+                  <Tags />
                 </ProtectedRoute>
               }
             />

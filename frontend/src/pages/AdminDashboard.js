@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Container,
   Typography,
@@ -13,46 +14,52 @@ import {
   Button,
   CircularProgress,
   Alert,
+  Chip,
+  IconButton,
 } from '@mui/material';
-import { Delete as DeleteIcon } from '@mui/icons-material';
+import {
+  Delete as DeleteIcon,
+  Visibility as ViewIcon,
+  Summarize as SummarizeIcon,
+  InsertDriveFile as FileIcon,
+  PictureAsPdf as PdfIcon,
+  Description as DocIcon,
+} from '@mui/icons-material';
+import { getAdminDocuments, deleteDocument, getStats } from '../services/api';
+
+// Map file types to icons and colors
+const fileTypeConfig = {
+  'pdf': { icon: <PdfIcon />, color: 'error' },
+  'docx': { icon: <DocIcon />, color: 'primary' },
+  'txt': { icon: <FileIcon />, color: 'success' },
+};
 
 function AdminDashboard() {
+  const navigate = useNavigate();
   const [documents, setDocuments] = useState([]);
+  const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetchDocuments();
+    fetchData();
   }, []);
 
-  const fetchDocuments = async () => {
+  const fetchData = async () => {
     try {
-      // TODO: Implement actual API call
-      // const response = await axios.get('/api/admin/documents');
-      // setDocuments(response.data);
+      setLoading(true);
+      setError(null);
       
-      // Temporary mock data
-      setDocuments([
-        {
-          id: 1,
-          title: 'Sample Document 1',
-          type: 'pdf',
-          size: '2.5 MB',
-          uploadedAt: '2024-03-15',
-          uploadedBy: 'user@example.com',
-        },
-        {
-          id: 2,
-          title: 'Sample Document 2',
-          type: 'docx',
-          size: '1.8 MB',
-          uploadedAt: '2024-03-14',
-          uploadedBy: 'admin@example.com',
-        },
-      ]);
+      // Fetch documents
+      const docs = await getAdminDocuments();
+      setDocuments(docs);
+      
+      // Fetch stats
+      const statsData = await getStats();
+      setStats(statsData);
     } catch (error) {
-      setError('Error fetching documents. Please try again.');
       console.error('Fetch error:', error);
+      setError('Error fetching data. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -64,15 +71,33 @@ function AdminDashboard() {
     }
 
     try {
-      // TODO: Implement actual API call
-      // await axios.delete(`/api/admin/documents/${documentId}`);
+      await deleteDocument(documentId);
       
       // Update local state
       setDocuments(documents.filter(doc => doc.id !== documentId));
+      
+      // Update stats
+      setStats({
+        ...stats,
+        document_count: (stats.document_count || 0) - 1
+      });
     } catch (error) {
-      setError('Error deleting document. Please try again.');
       console.error('Delete error:', error);
+      setError('Error deleting document. Please try again.');
     }
+  };
+
+  const handleView = (documentId) => {
+    navigate(`/document/${documentId}`);
+  };
+
+  const handleSummarize = (documentId) => {
+    navigate(`/document/${documentId}?summary=true`);
+  };
+
+  const getFileTypeConfig = (fileType) => {
+    const type = fileType?.toLowerCase() || 'txt';
+    return fileTypeConfig[type] || { icon: <FileIcon />, color: 'default' };
   };
 
   if (loading) {
@@ -95,6 +120,32 @@ function AdminDashboard() {
         </Alert>
       )}
 
+      <Box sx={{ mb: 4 }}>
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            System Statistics
+          </Typography>
+          
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+            <Chip 
+              label={`Total Documents: ${stats.document_count || 0}`} 
+              color="primary"
+              variant="outlined"
+            />
+            <Chip 
+              label={`Vector Store Size: ${stats.vector_store_size || 0} chunks`} 
+              color="secondary"
+              variant="outlined"
+            />
+            <Chip 
+              label={`API Version: ${stats.api_version || 'N/A'}`} 
+              color="info"
+              variant="outlined"
+            />
+          </Box>
+        </Paper>
+      </Box>
+
       <Paper sx={{ width: '100%', overflow: 'hidden' }}>
         <TableContainer>
           <Table>
@@ -102,33 +153,62 @@ function AdminDashboard() {
               <TableRow>
                 <TableCell>Title</TableCell>
                 <TableCell>Type</TableCell>
-                <TableCell>Size</TableCell>
-                <TableCell>Uploaded At</TableCell>
                 <TableCell>Uploaded By</TableCell>
+                <TableCell>Uploaded At</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {documents.map((doc) => (
-                <TableRow key={doc.id}>
-                  <TableCell>{doc.title}</TableCell>
-                  <TableCell>{doc.type.toUpperCase()}</TableCell>
-                  <TableCell>{doc.size}</TableCell>
-                  <TableCell>{doc.uploadedAt}</TableCell>
-                  <TableCell>{doc.uploadedBy}</TableCell>
-                  <TableCell align="right">
-                    <Button
-                      variant="outlined"
-                      color="error"
-                      size="small"
-                      startIcon={<DeleteIcon />}
-                      onClick={() => handleDelete(doc.id)}
-                    >
-                      Delete
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {documents.map((doc) => {
+                const fileTypeInfo = getFileTypeConfig(doc.file_type);
+                
+                return (
+                  <TableRow key={doc.id}>
+                    <TableCell>{doc.title}</TableCell>
+                    <TableCell>
+                      <Chip 
+                        icon={fileTypeInfo.icon}
+                        label={doc.file_type?.toUpperCase() || 'UNKNOWN'} 
+                        size="small"
+                        color={fileTypeInfo.color}
+                        variant="outlined"
+                      />
+                    </TableCell>
+                    <TableCell>{doc.uploaded_by}</TableCell>
+                    <TableCell>{new Date(doc.uploaded_at).toLocaleString()}</TableCell>
+                    <TableCell align="right">
+                      <IconButton
+                        color="primary"
+                        onClick={() => handleView(doc.id)}
+                        title="View Document"
+                        size="small"
+                        sx={{ mr: 1 }}
+                      >
+                        <ViewIcon />
+                      </IconButton>
+                      
+                      <IconButton
+                        color="success"
+                        onClick={() => handleSummarize(doc.id)}
+                        title="Summarize Document"
+                        size="small"
+                        sx={{ mr: 1 }}
+                      >
+                        <SummarizeIcon />
+                      </IconButton>
+                      
+                      <IconButton
+                        color="error"
+                        onClick={() => handleDelete(doc.id)}
+                        title="Delete Document"
+                        size="small"
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </TableContainer>

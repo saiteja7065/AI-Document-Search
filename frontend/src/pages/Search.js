@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Container,
   TextField,
@@ -10,34 +11,48 @@ import {
   ListItem,
   ListItemText,
   Paper,
+  Chip,
+  IconButton,
 } from '@mui/material';
-import { Search as SearchIcon } from '@mui/icons-material';
+import { 
+  Search as SearchIcon,
+  Article as ArticleIcon,
+  Summarize as SummarizeIcon,
+  ArrowForward as ArrowForwardIcon,
+} from '@mui/icons-material';
+import { searchDocuments } from '../services/api';
 
 function Search() {
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleSearch = async (e) => {
     e.preventDefault();
     if (!query.trim()) return;
 
     setLoading(true);
+    setError(null);
+    
     try {
-      // TODO: Implement actual API call
-      // const response = await axios.post('/api/search', { query });
-      // setResults(response.data.results);
+      const searchResults = await searchDocuments(query);
+      setResults(searchResults);
       
-      // Temporary mock data
-      setResults([
-        { id: 1, title: 'Sample Document 1', snippet: 'This is a sample document...' },
-        { id: 2, title: 'Sample Document 2', snippet: 'Another sample document...' },
-      ]);
-    } catch (error) {
-      console.error('Search error:', error);
+      if (searchResults.length === 0) {
+        setError(`No results found for "${query}"`);
+      }
+    } catch (err) {
+      console.error('Search error:', err);
+      setError('An error occurred while searching. Please try again.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const viewDocument = (documentId) => {
+    navigate(`/document/${documentId}`);
   };
 
   return (
@@ -55,6 +70,7 @@ function Search() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Enter your search query..."
+            helperText="Try asking a question or searching for specific information"
           />
           <Button
             type="submit"
@@ -74,27 +90,77 @@ function Search() {
         </Box>
       )}
 
-      {results.length > 0 && (
-        <List>
-          {results.map((result) => (
-            <ListItem
-              key={result.id}
-              component={Paper}
-              sx={{ mb: 2, p: 2 }}
-            >
-              <ListItemText
-                primary={result.title}
-                secondary={result.snippet}
-              />
-            </ListItem>
-          ))}
-        </List>
+      {error && !loading && (
+        <Typography variant="body1" color="error" align="center">
+          {error}
+        </Typography>
       )}
 
-      {!loading && results.length === 0 && query && (
-        <Typography variant="body1" color="text.secondary" align="center">
-          No results found for "{query}"
-        </Typography>
+      {results.length > 0 && (
+        <>
+          <Typography variant="h6" gutterBottom>
+            Search Results
+          </Typography>
+          <List>
+            {results.map((result) => (
+              <ListItem
+                key={result.document_id}
+                component={Paper}
+                sx={{ 
+                  mb: 2, 
+                  p: 2, 
+                  borderLeft: '4px solid',
+                  borderColor: 'primary.main',
+                  display: 'block'
+                }}
+              >
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Typography variant="h6" component="div">
+                    {result.title}
+                  </Typography>
+                  <Chip 
+                    icon={<ArticleIcon />} 
+                    label={result.file_type.toUpperCase()} 
+                    size="small"
+                    color="primary"
+                    variant="outlined"
+                  />
+                </Box>
+                
+                <Typography variant="body2" color="text.secondary" paragraph>
+                  {result.snippet}
+                </Typography>
+                
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Relevance: {Math.round(result.similarity_score * 100)}%
+                  </Typography>
+                  
+                  <Box>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<SummarizeIcon />}
+                      onClick={() => navigate(`/document/${result.document_id}?summary=true`)}
+                      sx={{ mr: 1 }}
+                    >
+                      Summarize
+                    </Button>
+                    
+                    <Button
+                      variant="contained"
+                      size="small"
+                      endIcon={<ArrowForwardIcon />}
+                      onClick={() => viewDocument(result.document_id)}
+                    >
+                      View
+                    </Button>
+                  </Box>
+                </Box>
+              </ListItem>
+            ))}
+          </List>
+        </>
       )}
     </Container>
   );

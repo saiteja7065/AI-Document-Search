@@ -26,16 +26,22 @@ function Home() {
       title: 'Natural Language Search',
       description: 'Search through your documents using everyday language. No need to remember exact keywords or phrases.',
       icon: <SearchIcon fontSize="large" />,
+      action: '/search',
+      buttonText: 'Search Documents'
     },
     {
       title: 'Document Upload',
       description: 'Upload and process multiple document types including PDF, DOCX, and TXT files.',
       icon: <UploadIcon fontSize="large" />,
+      action: '/upload',
+      buttonText: 'Upload Documents'
     },
     {
       title: 'Smart Summarization',
       description: 'Get instant summaries of your documents, highlighting key points and important information.',
       icon: <SummarizeIcon fontSize="large" />,
+      action: '/dashboard',
+      buttonText: 'View Documents'
     },
   ];
 
@@ -91,6 +97,11 @@ function Home() {
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'space-between',
+                transition: 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
+                '&:hover': {
+                  transform: 'translateY(-5px)',
+                  boxShadow: '0 8px 20px rgba(0,0,0,0.1)'
+                }
               }}
             >
               <CardContent>
@@ -107,11 +118,14 @@ function Home() {
               <CardActions>
                 {isSignedIn && (
                   <Button
-                    size="small"
+                    size="medium"
                     color="primary"
-                    onClick={() => navigate('/search')}
+                    fullWidth
+                    variant="contained"
+                    onClick={() => navigate(feature.action)}
+                    startIcon={feature.icon}
                   >
-                    Try it now
+                    {feature.buttonText}
                   </Button>
                 )}
               </CardActions>
@@ -119,6 +133,19 @@ function Home() {
           </Grid>
         ))}
       </Grid>
+      
+      {isSignedIn && (
+        <Box sx={{ textAlign: 'center', mt: 6 }}>
+          <Button
+            variant="outlined"
+            size="large"
+            onClick={() => navigate('/dashboard')}
+            sx={{ mr: 2 }}
+          >
+            Go to Dashboard
+          </Button>
+        </Box>
+      )}
     </Container>
   );
 }
