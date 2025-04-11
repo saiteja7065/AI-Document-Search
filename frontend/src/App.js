@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext } from 'react';
+import React, { createContext, useState, useContext, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -11,6 +11,7 @@ import DocumentViewer from './pages/DocumentViewer';
 import Upload from './pages/Upload';
 import AdminDashboard from './pages/AdminDashboard';
 import Tags from './pages/Tags';
+import Login from './pages/Login';
 
 // Create theme
 const theme = createTheme({
@@ -25,33 +26,75 @@ const theme = createTheme({
   },
 });
 
-// Mock authentication context
+// Authentication context
 const AuthContext = createContext();
 
 export const useAuth = () => useContext(AuthContext);
 
 function AuthProvider({ children }) {
-  const [isSignedIn, setIsSignedIn] = useState(true); // Default to signed in for demo
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loading, setLoading] = useState(true);
   
-  const signIn = () => setIsSignedIn(true);
-  const signOut = () => setIsSignedIn(false);
+  // Check for stored auth data on component mount
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token');
+    const storedUser = localStorage.getItem('user');
+    
+    if (token && storedUser) {
+      try {
+        setCurrentUser(JSON.parse(storedUser));
+      } catch {
+        localStorage.removeItem('user');
+        localStorage.removeItem('auth_token');
+      }
+    }
+    
+    setLoading(false);
+  }, []);
+  
+  const signIn = (userData) => {
+    setCurrentUser(userData);
+    localStorage.setItem('user', JSON.stringify(userData));
+  };
+  
+  const signOut = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('user');
+    localStorage.removeItem('auth_token');
+  };
+  
+  const isAdmin = currentUser?.isAdmin || false;
+  const isSignedIn = !!currentUser;
   
   return (
-    <AuthContext.Provider value={{ isSignedIn, signIn, signOut }}>
+    <AuthContext.Provider value={{ currentUser, isSignedIn, isAdmin, signIn, signOut, loading }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
-// Mock user component to replace Clerk's UserButton
+// Custom user button component
 export const UserButton = () => {
-  const { isSignedIn, signIn, signOut } = useAuth();
+  const { isSignedIn, currentUser, signOut } = useAuth();
+  
+  if (!isSignedIn) {
+    return null;
+  }
+  
+  const handleSignOut = () => {
+    if (window.confirm('Are you sure you want to sign out?')) {
+      signOut();
+    }
+  };
+  
+  const initials = currentUser?.username?.substring(0, 1).toUpperCase() || 'U';
   
   return (
     <button 
-      onClick={isSignedIn ? signOut : signIn}
+      onClick={handleSignOut}
+      title="Click to sign out"
       style={{
-        background: '#f0f0f0',
+        background: currentUser?.isAdmin ? '#dc004e' : '#1976d2',
         border: 'none',
         borderRadius: '50%',
         width: '40px',
@@ -61,18 +104,27 @@ export const UserButton = () => {
         alignItems: 'center',
         justifyContent: 'center',
         fontWeight: 'bold',
-        color: '#1976d2'
+        color: 'white'
       }}
     >
-      {isSignedIn ? 'U' : 'S'}
+      {initials}
     </button>
   );
 };
 
-function ProtectedRoute({ children }) {
-  const { isSignedIn } = useAuth();
+// Route guard for protected routes
+function ProtectedRoute({ children, requireAdmin }) {
+  const { isSignedIn, isAdmin, loading } = useAuth();
+  
+  if (loading) {
+    return <div>Loading...</div>;
+  }
   
   if (!isSignedIn) {
+    return <Navigate to="/login" replace />;
+  }
+  
+  if (requireAdmin && !isAdmin) {
     return <Navigate to="/" replace />;
   }
   
@@ -89,6 +141,7 @@ function App() {
           <Routes>
             {/* Public routes */}
             <Route path="/" element={<Home />} />
+            <Route path="/login" element={<Login />} />
             
             {/* Protected routes */}
             <Route
@@ -118,7 +171,7 @@ function App() {
             <Route
               path="/admin"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requireAdmin>
                   <AdminDashboard />
                 </ProtectedRoute>
               }

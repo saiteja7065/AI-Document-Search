@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useLocation } from 'react-router-dom';
 import {
   AppBar,
   Toolbar,
@@ -15,25 +15,46 @@ import {
   Upload as UploadIcon,
   Dashboard as DashboardIcon,
   Label as LabelIcon,
+  Login as LoginIcon,
 } from '@mui/icons-material';
 import { useAuth, UserButton } from '../App';
 
 function Navbar() {
-  const { isSignedIn } = useAuth();
-
-  const pages = [
+  const { isSignedIn, isAdmin } = useAuth();
+  const location = useLocation();
+  
+  // Common pages for all users
+  const commonPages = [
     { name: 'Home', path: '/', icon: <HomeIcon /> },
     { name: 'Search', path: '/search', icon: <SearchIcon /> },
     { name: 'Upload', path: '/upload', icon: <UploadIcon /> },
     { name: 'Tags', path: '/tags', icon: <LabelIcon /> },
+  ];
+  
+  // Admin-only pages
+  const adminPages = [
     { name: 'Admin', path: '/admin', icon: <DashboardIcon /> },
   ];
+  
+  // Public pages (when not signed in)
+  const publicPages = [
+    { name: 'Home', path: '/', icon: <HomeIcon /> },
+    { name: 'Login', path: '/login', icon: <LoginIcon /> },
+  ];
+  
+  // Determine which pages to show based on auth status
+  const pages = !isSignedIn 
+    ? publicPages
+    : isAdmin 
+      ? [...commonPages, ...adminPages]
+      : commonPages;
 
   return (
     <AppBar position="static">
       <Container maxWidth="xl">
-        <Toolbar disableGutters>
-          <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center' }}>
+        <Toolbar disableGutters sx={{ display: 'flex', justifyContent: 'space-between' }}>
+          {/* Logo section */}
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <DescriptionIcon sx={{ display: { xs: 'none', md: 'flex' }, mr: 1 }} />
             <Typography
               variant="h6"
@@ -41,8 +62,6 @@ function Navbar() {
               component={RouterLink}
               to="/"
               sx={{
-                mr: 2,
-                display: { xs: 'none', md: 'flex' },
                 fontWeight: 700,
                 color: 'inherit',
                 textDecoration: 'none',
@@ -50,29 +69,43 @@ function Navbar() {
             >
               AI Document Search
             </Typography>
-
-            {isSignedIn && (
-              <Box sx={{ display: { xs: 'none', md: 'flex' } }}>
-                {pages.map((page) => (
-                  <Button
-                    key={page.name}
-                    component={RouterLink}
-                    to={page.path}
-                    startIcon={page.icon}
-                    sx={{ my: 2, color: 'white', display: 'flex' }}
-                  >
-                    {page.name}
-                  </Button>
-                ))}
-              </Box>
-            )}
           </Box>
 
-          {isSignedIn && (
-            <Box sx={{ flexGrow: 0 }}>
+          {/* Navigation buttons - centered */}
+          <Box sx={{ display: 'flex', justifyContent: 'center', flexGrow: 1 }}>
+            {pages.map((page) => (
+              <Button
+                key={page.name}
+                component={RouterLink}
+                to={page.path}
+                startIcon={page.icon}
+                sx={{ 
+                  mx: 1, 
+                  color: 'white', 
+                  display: 'flex',
+                  borderBottom: location.pathname === page.path ? '2px solid white' : 'none',
+                }}
+              >
+                {page.name}
+              </Button>
+            ))}
+          </Box>
+
+          {/* User button */}
+          <Box>
+            {isSignedIn ? (
               <UserButton />
-            </Box>
-          )}
+            ) : (
+              <Button 
+                component={RouterLink} 
+                to="/login" 
+                color="inherit"
+                startIcon={<LoginIcon />}
+              >
+                Login
+              </Button>
+            )}
+          </Box>
         </Toolbar>
       </Container>
     </AppBar>

@@ -16,6 +16,17 @@ import {
   Alert,
   Chip,
   IconButton,
+  Tabs,
+  Tab,
+  Grid,
+  Card,
+  CardContent,
+  Divider,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemAvatar,
+  Avatar,
 } from '@mui/material';
 import {
   Delete as DeleteIcon,
@@ -24,8 +35,17 @@ import {
   InsertDriveFile as FileIcon,
   PictureAsPdf as PdfIcon,
   Description as DocIcon,
+  Storage as StorageIcon,
+  Person as PersonIcon,
+  Dashboard as DashboardIcon,
+  Refresh as RefreshIcon,
 } from '@mui/icons-material';
-import { getAdminDocuments, deleteDocument, getStats } from '../services/api';
+import { 
+  getAdminDocuments, 
+  adminDeleteDocument, 
+  getAdminStats, 
+  getAdminUsers 
+} from '../services/api';
 
 // Map file types to icons and colors
 const fileTypeConfig = {
@@ -34,12 +54,34 @@ const fileTypeConfig = {
   'txt': { icon: <FileIcon />, color: 'success' },
 };
 
+function TabPanel(props) {
+  const { children, value, index, ...other } = props;
+
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`tabpanel-${index}`}
+      aria-labelledby={`tab-${index}`}
+      {...other}
+    >
+      {value === index && (
+        <Box sx={{ py: 3 }}>
+          {children}
+        </Box>
+      )}
+    </div>
+  );
+}
+
 function AdminDashboard() {
   const navigate = useNavigate();
   const [documents, setDocuments] = useState([]);
+  const [users, setUsers] = useState([]);
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [tabValue, setTabValue] = useState(0);
 
   useEffect(() => {
     fetchData();
@@ -54,8 +96,12 @@ function AdminDashboard() {
       const docs = await getAdminDocuments();
       setDocuments(docs);
       
+      // Fetch users
+      const usersData = await getAdminUsers();
+      setUsers(usersData);
+      
       // Fetch stats
-      const statsData = await getStats();
+      const statsData = await getAdminStats();
       setStats(statsData);
     } catch (error) {
       console.error('Fetch error:', error);
@@ -71,16 +117,10 @@ function AdminDashboard() {
     }
 
     try {
-      await deleteDocument(documentId);
+      await adminDeleteDocument(documentId);
       
-      // Update local state
-      setDocuments(documents.filter(doc => doc.id !== documentId));
-      
-      // Update stats
-      setStats({
-        ...stats,
-        document_count: (stats.document_count || 0) - 1
-      });
+      // Refresh data to get updated counts
+      fetchData();
     } catch (error) {
       console.error('Delete error:', error);
       setError('Error deleting document. Please try again.');
@@ -100,6 +140,10 @@ function AdminDashboard() {
     return fileTypeConfig[type] || { icon: <FileIcon />, color: 'default' };
   };
 
+  const handleTabChange = (event, newValue) => {
+    setTabValue(newValue);
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
@@ -110,9 +154,18 @@ function AdminDashboard() {
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Typography variant="h4" component="h1" gutterBottom>
-        Admin Dashboard
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h4" component="h1">
+          Admin Dashboard
+        </Typography>
+        <Button
+          variant="outlined"
+          startIcon={<RefreshIcon />}
+          onClick={fetchData}
+        >
+          Refresh
+        </Button>
+      </Box>
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -120,105 +173,254 @@ function AdminDashboard() {
         </Alert>
       )}
 
-      <Box sx={{ mb: 4 }}>
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            System Statistics
-          </Typography>
-          
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
-            <Chip 
-              label={`Total Documents: ${stats.document_count || 0}`} 
-              color="primary"
-              variant="outlined"
-            />
-            <Chip 
-              label={`Vector Store Size: ${stats.vector_store_size || 0} chunks`} 
-              color="secondary"
-              variant="outlined"
-            />
-            <Chip 
-              label={`API Version: ${stats.api_version || 'N/A'}`} 
-              color="info"
-              variant="outlined"
-            />
-          </Box>
-        </Paper>
-      </Box>
+      <Paper sx={{ width: '100%' }}>
+        <Tabs
+          value={tabValue}
+          onChange={handleTabChange}
+          variant="fullWidth"
+          indicatorColor="primary"
+          textColor="primary"
+        >
+          <Tab icon={<DashboardIcon />} label="Overview" />
+          <Tab icon={<FileIcon />} label="Documents" />
+          <Tab icon={<PersonIcon />} label="Users" />
+        </Tabs>
 
-      <Paper sx={{ width: '100%', overflow: 'hidden' }}>
-        <TableContainer>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Title</TableCell>
-                <TableCell>Type</TableCell>
-                <TableCell>Uploaded By</TableCell>
-                <TableCell>Uploaded At</TableCell>
-                <TableCell align="right">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {documents.map((doc) => {
-                const fileTypeInfo = getFileTypeConfig(doc.file_type);
-                
-                return (
-                  <TableRow key={doc.id}>
-                    <TableCell>{doc.title}</TableCell>
-                    <TableCell>
-                      <Chip 
-                        icon={fileTypeInfo.icon}
-                        label={doc.file_type?.toUpperCase() || 'UNKNOWN'} 
-                        size="small"
-                        color={fileTypeInfo.color}
-                        variant="outlined"
+        {/* Overview Tab */}
+        <TabPanel value={tabValue} index={0}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={4}>
+              <Card>
+                <CardContent>
+                  <Typography color="textSecondary" gutterBottom>
+                    Total Documents
+                  </Typography>
+                  <Typography variant="h3">
+                    {stats.total_documents || 0}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <Card>
+                <CardContent>
+                  <Typography color="textSecondary" gutterBottom>
+                    Storage Used
+                  </Typography>
+                  <Typography variant="h3">
+                    {stats.storage_usage ? `${Math.round(stats.storage_usage / (1024 * 1024))} MB` : '0 MB'}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <Card>
+                <CardContent>
+                  <Typography color="textSecondary" gutterBottom>
+                    Total Users
+                  </Typography>
+                  <Typography variant="h3">
+                    {users.length}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            
+            <Grid item xs={12} md={6}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Documents by Type
+                  </Typography>
+                  <List>
+                    {stats.documents_by_type?.map((type) => (
+                      <ListItem key={type.type}>
+                        <ListItemAvatar>
+                          <Avatar sx={{ bgcolor: getFileTypeConfig(type.type).color + '.light' }}>
+                            {getFileTypeConfig(type.type).icon}
+                          </Avatar>
+                        </ListItemAvatar>
+                        <ListItemText 
+                          primary={`${type.type.toUpperCase()}`} 
+                          secondary={`${type.count} document(s)`} 
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                </CardContent>
+              </Card>
+            </Grid>
+            
+            <Grid item xs={12} md={6}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    System Information
+                  </Typography>
+                  <List>
+                    <ListItem>
+                      <ListItemAvatar>
+                        <Avatar>
+                          <StorageIcon />
+                        </Avatar>
+                      </ListItemAvatar>
+                      <ListItemText 
+                        primary="Vector Store" 
+                        secondary={`${stats.vector_store_chunks || 'N/A'} chunks`} 
                       />
-                    </TableCell>
-                    <TableCell>{doc.uploaded_by}</TableCell>
-                    <TableCell>{new Date(doc.uploaded_at).toLocaleString()}</TableCell>
-                    <TableCell align="right">
-                      <IconButton
-                        color="primary"
-                        onClick={() => handleView(doc.id)}
-                        title="View Document"
-                        size="small"
-                        sx={{ mr: 1 }}
-                      >
-                        <ViewIcon />
-                      </IconButton>
-                      
-                      <IconButton
-                        color="success"
-                        onClick={() => handleSummarize(doc.id)}
-                        title="Summarize Document"
-                        size="small"
-                        sx={{ mr: 1 }}
-                      >
-                        <SummarizeIcon />
-                      </IconButton>
-                      
-                      <IconButton
-                        color="error"
-                        onClick={() => handleDelete(doc.id)}
-                        title="Delete Document"
-                        size="small"
-                      >
-                        <DeleteIcon />
-                      </IconButton>
+                    </ListItem>
+                    <ListItem>
+                      <ListItemAvatar>
+                        <Avatar>
+                          <DashboardIcon />
+                        </Avatar>
+                      </ListItemAvatar>
+                      <ListItemText 
+                        primary="API Version" 
+                        secondary={stats.api_version || 'N/A'} 
+                      />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemAvatar>
+                        <Avatar sx={{ bgcolor: 'success.light' }}>
+                          <DashboardIcon />
+                        </Avatar>
+                      </ListItemAvatar>
+                      <ListItemText 
+                        primary="System Status" 
+                        secondary={stats.system_status || 'N/A'} 
+                      />
+                    </ListItem>
+                  </List>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        </TabPanel>
+
+        {/* Documents Tab */}
+        <TabPanel value={tabValue} index={1}>
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Title</TableCell>
+                  <TableCell>Type</TableCell>
+                  <TableCell>Uploaded By</TableCell>
+                  <TableCell>Uploaded At</TableCell>
+                  <TableCell align="right">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {documents.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} align="center">
+                      <Typography variant="body1" color="textSecondary">
+                        No documents found
+                      </Typography>
                     </TableCell>
                   </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+                ) : (
+                  documents.map((doc) => {
+                    const fileTypeInfo = getFileTypeConfig(doc.file_type);
+                    
+                    return (
+                      <TableRow key={doc.id}>
+                        <TableCell>{doc.title}</TableCell>
+                        <TableCell>
+                          <Chip 
+                            icon={fileTypeInfo.icon}
+                            label={doc.file_type?.toUpperCase() || 'UNKNOWN'} 
+                            size="small"
+                            color={fileTypeInfo.color}
+                            variant="outlined"
+                          />
+                        </TableCell>
+                        <TableCell>{doc.uploaded_by}</TableCell>
+                        <TableCell>{new Date(doc.uploaded_at).toLocaleString()}</TableCell>
+                        <TableCell align="right">
+                          <IconButton
+                            color="primary"
+                            onClick={() => handleView(doc.id)}
+                            title="View Document"
+                            size="small"
+                            sx={{ mr: 1 }}
+                          >
+                            <ViewIcon />
+                          </IconButton>
+                          
+                          <IconButton
+                            color="success"
+                            onClick={() => handleSummarize(doc.id)}
+                            title="Summarize Document"
+                            size="small"
+                            sx={{ mr: 1 }}
+                          >
+                            <SummarizeIcon />
+                          </IconButton>
+                          
+                          <IconButton
+                            color="error"
+                            onClick={() => handleDelete(doc.id)}
+                            title="Delete Document"
+                            size="small"
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </TabPanel>
 
-      {documents.length === 0 && !error && (
-        <Typography variant="body1" color="text.secondary" align="center" sx={{ mt: 4 }}>
-          No documents found in the system.
-        </Typography>
-      )}
+        {/* Users Tab */}
+        <TabPanel value={tabValue} index={2}>
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Username</TableCell>
+                  <TableCell>Email</TableCell>
+                  <TableCell>Role</TableCell>
+                  <TableCell>Created</TableCell>
+                  <TableCell>Documents</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {users.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} align="center">
+                      <Typography variant="body1" color="textSecondary">
+                        No users found
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  users.map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell>{user.username}</TableCell>
+                      <TableCell>{user.email}</TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={user.is_admin ? 'Admin' : 'User'} 
+                          color={user.is_admin ? 'secondary' : 'primary'}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>{new Date(user.created_at).toLocaleDateString()}</TableCell>
+                      <TableCell>{user.document_count}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </TabPanel>
+      </Paper>
     </Container>
   );
 }

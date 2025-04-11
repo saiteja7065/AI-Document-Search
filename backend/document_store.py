@@ -12,8 +12,20 @@ class DocumentStore:
     Manages document storage and metadata using Firebase.
     """
     
-    def __init__(self):
-        """Initialize the document store with Firebase credentials."""
+    def __init__(self, use_mock=False):
+        """
+        Initialize the document store with Firebase credentials or use mock implementation.
+        
+        Args:
+            use_mock: If True, use a mock implementation instead of Firebase
+        """
+        self.use_mock = use_mock
+        
+        # Use mock implementation for development without Firebase
+        if self.use_mock:
+            self._initialize_mock_storage()
+            return
+            
         # Initialize Firebase if not already initialized
         if not firebase_admin._apps:
             # For local development with a service account key file
@@ -44,6 +56,12 @@ class DocumentStore:
         # Set up collection references
         self.documents_collection = self.db.collection('documents')
     
+    def _initialize_mock_storage(self):
+        """Initialize mock storage for development without Firebase."""
+        self.mock_documents = []
+        self.mock_files = {}
+        print("Using mock implementation of DocumentStore")
+    
     def store_document(self, file_path: str, title: str, metadata: Dict, user_id: str) -> str:
         """
         Store a document in Firebase Storage and save metadata in Firestore.
@@ -59,9 +77,34 @@ class DocumentStore:
         """
         # Generate a unique ID for the document
         document_id = str(uuid.uuid4())
-        
-        # Upload file to Firebase Storage
         file_extension = os.path.splitext(file_path)[1]
+        
+        if self.use_mock:
+            # Mock implementation
+            file_url = f"mock://documents/{document_id}{file_extension}"
+            
+            # Copy the file to a mock storage location
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+                self.mock_files[document_id] = file_content
+            
+            # Create document metadata
+            document_data = {
+                'id': document_id,
+                'title': title,
+                'fileName': os.path.basename(file_path),
+                'fileUrl': file_url,
+                'fileType': metadata.get('file_type', 'unknown'),
+                'uploadedBy': user_id,
+                'uploadedAt': datetime.datetime.now().isoformat(),
+                'metadata': metadata,
+            }
+            
+            # Save to mock storage
+            self.mock_documents.append(document_data)
+            return document_id
+        
+        # Real Firebase implementation
         storage_path = f"documents/{document_id}{file_extension}"
         blob = self.bucket.blob(storage_path)
         blob.upload_from_filename(file_path)
@@ -99,6 +142,14 @@ class DocumentStore:
         Returns:
             Document metadata or None if not found
         """
+        if self.use_mock:
+            # Mock implementation
+            for doc in self.mock_documents:
+                if doc['id'] == document_id:
+                    return doc
+            return None
+        
+        # Real Firebase implementation
         doc_ref = self.documents_collection.document(document_id)
         doc = doc_ref.get()
         
@@ -118,6 +169,21 @@ class DocumentStore:
         Returns:
             List of document metadata
         """
+        if self.use_mock:
+            # Mock implementation
+            docs = self.mock_documents
+            
+            # Filter by user if specified
+            if user_id:
+                docs = [doc for doc in docs if doc['uploadedBy'] == user_id]
+            
+            # Sort by upload date, most recent first
+            docs = sorted(docs, key=lambda x: x['uploadedAt'], reverse=True)
+            
+            # Limit results
+            return docs[:limit]
+        
+        # Real Firebase implementation
         query = self.documents_collection
         
         # Filter by user if specified
@@ -144,6 +210,25 @@ class DocumentStore:
             True if successful, False otherwise
         """
         try:
+            if self.use_mock:
+                # Mock implementation
+                # Find document index
+                doc_index = None
+                for i, doc in enumerate(self.mock_documents):
+                    if doc['id'] == document_id:
+                        doc_index = i
+                        break
+                
+                if doc_index is not None:
+                    # Remove from mock documents
+                    self.mock_documents.pop(doc_index)
+                    # Remove from mock files
+                    if document_id in self.mock_files:
+                        del self.mock_files[document_id]
+                    return True
+                return False
+            
+            # Real Firebase implementation
             # Get document metadata
             doc = self.get_document(document_id)
             
@@ -178,6 +263,20 @@ class DocumentStore:
             True if successful, False otherwise
         """
         try:
+            if self.use_mock:
+                # Mock implementation
+                for i, doc in enumerate(self.mock_documents):
+                    if doc['id'] == document_id:
+                        # Update document
+                        self.mock_documents[i] = {
+                            **self.mock_documents[i],
+                            **updates,
+                            'updatedAt': datetime.datetime.now().isoformat()
+                        }
+                        return True
+                return False
+            
+            # Real Firebase implementation
             # Update document in Firestore
             self.documents_collection.document(document_id).update(updates)
             return True
