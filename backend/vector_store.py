@@ -1,246 +1,94 @@
-import os
-import uuid
-import json
-import tempfile
-import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict, Any
 import chromadb
+from chromadb.config import Settings
+from sentence_transformers import SentenceTransformer
+import numpy as np
 from config import settings
 
 class VectorStore:
-    """
-    Manages document vectors for semantic search using Chroma DB.
-    """
-    
-    def __init__(self, use_mock=False):
-        """
-        Initialize the vector store.
-        
-        Args:
-            use_mock: If True, use a mock implementation instead of ChromaDB
-        """
-        self.use_mock = use_mock
-        
+    def add_document(self, document_id: str, text_chunks: List[str], metadata: Dict[str, Any] = None):
+        """Add document chunks to the vector store"""
         if self.use_mock:
-            self._initialize_mock_storage()
             return
         
-        # Get persist directory from settings
-        persist_directory = settings.CHROMA_PERSIST_DIRECTORY
+        # Generate embeddings for chunks
+        embeddings = self.model.encode(text_chunks)
         
-        # Make sure the directory exists
-        os.makedirs(persist_directory, exist_ok=True)
-        
-        # Initialize ChromaDB client
-        self.client = chromadb.PersistentClient(path=persist_directory)
-        
-        # Get or create collection for documents
-        self.collection = self.client.get_or_create_collection("documents")
-    
-    def _initialize_mock_storage(self):
-        """Initialize mock storage for vector search."""
-        self.mock_vectors = {}
-        self.mock_documents = {}
-        print("Using mock implementation of VectorStore")
-    
-    def _mock_embedding(self, text: str) -> List[float]:
-        """Generate a mock embedding vector for text."""
-        # Create a deterministic but unique vector based on the text
-        # This is just for demo purposes, not for real similarity search
-        hash_val = hash(text) % 10000
-        np.random.seed(hash_val)
-        return np.random.rand(384).tolist()  # 384-dimensional vector
-    
-    def _calculate_mock_similarity(self, query_vector: List[float], doc_vector: List[float]) -> float:
-        """Calculate cosine similarity between two vectors."""
-        # Convert to numpy arrays
-        vec1 = np.array(query_vector)
-        vec2 = np.array(doc_vector)
-        
-        # Calculate cosine similarity
-        dot_product = np.dot(vec1, vec2)
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
-        
-        # Avoid division by zero
-        if norm1 == 0 or norm2 == 0:
-            return 0
-            
-        return dot_product / (norm1 * norm2)
-    
-    def add_document(self, document_id: str, chunks: List[str], metadata: Dict) -> None:
-        """
-        Add document chunks to the vector store for search.
-        
-        Args:
-            document_id: The document ID
-            chunks: List of text chunks to add
-            metadata: Additional metadata for the document
-        """
-        if self.use_mock:
-            # Mock implementation
-            for i, chunk in enumerate(chunks):
-                chunk_id = f"{document_id}_{i}"
-                embedding = self._mock_embedding(chunk)
-                
-                # Store the chunk and its embedding
-                self.mock_vectors[chunk_id] = embedding
-                self.mock_documents[chunk_id] = {
-                    "document_id": document_id,
-                    "content": chunk,
-                    "metadata": metadata,
-                    "chunk_index": i
-                }
-            return
-        
-        # Real implementation with ChromaDB
-        # Add chunks to the collection
-        for i, chunk in enumerate(chunks):
-            chunk_id = f"{document_id}_{i}"
-            
-            # Add metadata for each chunk
-            chunk_metadata = {
-                "document_id": document_id,
-                "chunk_index": i,
-                **metadata
-            }
-            
-            # Add to ChromaDB
-            self.collection.add(
-                ids=[chunk_id],
-                documents=[chunk],
-                metadatas=[chunk_metadata]
-            )
-    
-    def search(self, query: str, limit: int = 5, filter_criteria: Optional[Dict] = None) -> List[Dict]:
-        """
-        Search for documents using a natural language query.
-        
-        Args:
-            query: The search query
-            limit: Maximum number of results to return
-            filter_criteria: Optional filter to apply to search results
-            
-        Returns:
-            List of search results with document ID, content, and similarity score
-        """
-        if self.use_mock:
-            # Mock implementation
-            # Create a query embedding
-            query_embedding = self._mock_embedding(query)
-            
-            # Calculate similarity scores for all chunks
-            results = []
-            for chunk_id, doc_embedding in self.mock_vectors.items():
-                similarity = self._calculate_mock_similarity(query_embedding, doc_embedding)
-                doc_info = self.mock_documents[chunk_id]
-                
-                # Apply filter if specified
-                if filter_criteria:
-                    # Simple filtering logic - all criteria must match
-                    match = True
-                    for key, value in filter_criteria.items():
-                        if key in doc_info["metadata"] and doc_info["metadata"][key] != value:
-                            match = False
-                            break
-                    
-                    if not match:
-                        continue
-                
-                results.append({
-                    "document_id": doc_info["document_id"],
-                    "content": doc_info["content"],
-                    "similarity_score": similarity,
-                    "metadata": doc_info["metadata"]
-                })
-            
-            # Sort by similarity score and limit results
-            results = sorted(results, key=lambda x: x["similarity_score"], reverse=True)[:limit]
-            return results
-        
-        # Real implementation with ChromaDB
-        # Create filter if specified
-        where_clause = filter_criteria if filter_criteria else None
-        
-        # Query the collection
-        results = self.collection.query(
-            query_texts=[query],
-            n_results=limit,
-            where=where_clause
+        # Add to Chroma
+        self.collection.add(
+            embeddings=embeddings.tolist(),
+            documents=text_chunks,
+            ids=[f"{document_id}_{i}" for i in range(len(text_chunks))],
+            metadatas=[{**metadata, "chunk_index": i} for i in range(len(text_chunks))] if metadata else None
         )
         
-        # Format the results
+    def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Search for similar documents using the query"""
+        if self.use_mock:
+            return []
+            
+        # Generate query embedding
+        query_embedding = self.model.encode(query)
+        
+        # Search in Chroma
+        results = self.collection.query(
+            query_embeddings=[query_embedding.tolist()],
+            n_results=limit
+        )
+        
+        # Format results
         formatted_results = []
-        if results and len(results["ids"]) > 0:
-            for i, doc_id in enumerate(results["ids"][0]):
-                document_id = results["metadatas"][0][i]["document_id"]
-                
-                formatted_results.append({
-                    "document_id": document_id,
-                    "content": results["documents"][0][i],
-                    "similarity_score": float(results["distances"][0][i]) if "distances" in results else 0.99,
-                    "metadata": results["metadatas"][0][i]
-                })
+        for i in range(len(results['ids'][0])):
+            doc_id = results['ids'][0][i].split('_')[0]  # Get original document ID
+            formatted_results.append({
+                'document_id': doc_id,
+                'chunk_text': results['documents'][0][i],
+                'similarity_score': float(results['distances'][0][i]) if 'distances' in results else 0.0,
+                'metadata': results['metadatas'][0][i] if results['metadatas'] else {}
+            })
         
         return formatted_results
-    
-    def delete_document(self, document_id: str) -> bool:
-        """
-        Delete a document and all its chunks from the vector store.
-        
-        Args:
-            document_id: The document ID to delete
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            if self.use_mock:
-                # Mock implementation
-                # Find and remove all chunks for the document
-                chunk_ids_to_remove = []
-                for chunk_id, doc_info in self.mock_documents.items():
-                    if doc_info["document_id"] == document_id:
-                        chunk_ids_to_remove.append(chunk_id)
-                
-                # Remove from mock storage
-                for chunk_id in chunk_ids_to_remove:
-                    if chunk_id in self.mock_vectors:
-                        del self.mock_vectors[chunk_id]
-                    if chunk_id in self.mock_documents:
-                        del self.mock_documents[chunk_id]
-                
-                return True
-            
-            # Real implementation with ChromaDB
-            # Get all chunks for the document
-            results = self.collection.get(
-                where={"document_id": document_id}
-            )
-            
-            if results and len(results["ids"]) > 0:
-                # Delete all chunks
-                self.collection.delete(
-                    ids=results["ids"]
-                )
-            
-            return True
-        except Exception as e:
-            print(f"Error deleting document from vector store: {str(e)}")
-            return False
 
-    def get_document_count(self) -> int:
-        """
-        Get the total number of unique documents in the vector store.
+    def delete_document(self, document_id: str):
+        """Delete all chunks for a document"""
+        if self.use_mock:
+            return
+            
+        # Get all chunk IDs for the document
+        results = self.collection.get(where={"document_id": document_id})
+        if results and results['ids']:
+            self.collection.delete(ids=results['ids'])
+            
+    def get_similar_documents(self, document_id: str, limit: int = 3) -> List[Dict[str, Any]]:
+        """Find documents similar to a given document"""
+        if self.use_mock:
+            return []
+            
+        # Get document embeddings
+        results = self.collection.get(where={"document_id": document_id})
+        if not results or not results['embeddings']:
+            return []
+            
+        # Use first chunk as representative embedding
+        doc_embedding = results['embeddings'][0]
         
-        Returns:
-            Number of documents
-        """
-        results = self.collection.get()
+        # Search for similar documents
+        similar = self.collection.query(
+            query_embeddings=[doc_embedding],
+            n_results=limit + 1  # Add 1 to account for the document itself
+        )
         
-        # Extract unique document IDs from metadata
-        document_ids = set()
-        for metadata in results["metadatas"]:
-            document_ids.add(metadata["document_id"])
-        
-        return len(document_ids) 
+        # Filter out the original document and format results
+        formatted_results = []
+        seen_docs = set()
+        for i in range(len(similar['ids'][0])):
+            doc_id = similar['ids'][0][i].split('_')[0]
+            if doc_id != document_id and doc_id not in seen_docs:
+                seen_docs.add(doc_id)
+                formatted_results.append({
+                    'document_id': doc_id,
+                    'similarity_score': float(similar['distances'][0][i]) if 'distances' in similar else 0.0,
+                    'metadata': similar['metadatas'][0][i] if similar['metadatas'] else {}
+                })
+                
+        return formatted_results[:limit]

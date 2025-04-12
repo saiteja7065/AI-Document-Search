@@ -1,131 +1,115 @@
-import os
+from typing import List, Dict, Any
 import PyPDF2
-import docx
-from typing import Dict, List, Optional, Tuple
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from docx import Document
+import os
+from bs4 import BeautifulSoup
+import numpy as np
+from config import settings
 
 class DocumentProcessor:
-    """
-    Processes different document types and extracts text content.
-    Supports PDF, DOCX, and TXT files.
-    """
-    
-    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
-        """
-        Initialize the document processor.
+    def __init__(self):
+        self.chunk_size = 1000  # characters per chunk
+        self.chunk_overlap = 200  # character overlap between chunks
         
-        Args:
-            chunk_size: The size of text chunks for processing
-            chunk_overlap: The overlap between chunks
-        """
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            length_function=len,
-        )
-    
-    def process_file(self, file_path: str) -> Dict:
-        """
-        Process a file and extract its content.
+    def process_document(self, file_path: str, file_type: str) -> Dict[str, Any]:
+        """Process a document and return its text content and metadata"""
+        text = self._extract_text(file_path, file_type)
+        chunks = self._create_chunks(text)
+        metadata = self._extract_metadata(file_path, file_type)
         
-        Args:
-            file_path: Path to the file
-            
-        Returns:
-            Dict containing the extracted text and metadata
-        """
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
+        return {
+            "text": text,
+            "chunks": chunks,
+            "metadata": metadata
+        }
         
-        file_extension = os.path.splitext(file_path)[1].lower()
-        
-        if file_extension == '.pdf':
-            return self._process_pdf(file_path)
-        elif file_extension == '.docx':
-            return self._process_docx(file_path)
-        elif file_extension == '.txt':
-            return self._process_txt(file_path)
+    def _extract_text(self, file_path: str, file_type: str) -> str:
+        """Extract text from different file types"""
+        if file_type == "pdf":
+            return self._extract_from_pdf(file_path)
+        elif file_type == "docx":
+            return self._extract_from_docx(file_path)
+        elif file_type == "txt":
+            return self._extract_from_txt(file_path)
         else:
-            raise ValueError(f"Unsupported file type: {file_extension}")
-    
-    def _process_pdf(self, file_path: str) -> Dict:
-        """Process PDF files and extract text."""
-        try:
-            with open(file_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
-                num_pages = len(reader.pages)
-                text = ""
-                
-                for page_num in range(num_pages):
-                    page = reader.pages[page_num]
-                    text += page.extract_text() + "\n"
-                
-                chunks = self._split_text(text)
-                
-                return {
-                    'text': text,
-                    'chunks': chunks,
-                    'metadata': {
-                        'source': file_path,
-                        'file_type': 'pdf',
-                        'page_count': num_pages,
-                    }
-                }
-        except Exception as e:
-            raise Exception(f"Error processing PDF file: {str(e)}")
-    
-    def _process_docx(self, file_path: str) -> Dict:
-        """Process DOCX files and extract text."""
-        try:
-            doc = docx.Document(file_path)
-            text = ""
+            raise ValueError(f"Unsupported file type: {file_type}")
             
-            for para in doc.paragraphs:
-                text += para.text + "\n"
-            
-            chunks = self._split_text(text)
-            
-            return {
-                'text': text,
-                'chunks': chunks,
-                'metadata': {
-                    'source': file_path,
-                    'file_type': 'docx',
-                    'paragraph_count': len(doc.paragraphs),
-                }
-            }
-        except Exception as e:
-            raise Exception(f"Error processing DOCX file: {str(e)}")
-    
-    def _process_txt(self, file_path: str) -> Dict:
-        """Process TXT files and extract text."""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                text = file.read()
-            
-            chunks = self._split_text(text)
-            
-            return {
-                'text': text,
-                'chunks': chunks,
-                'metadata': {
-                    'source': file_path,
-                    'file_type': 'txt',
-                }
-            }
-        except Exception as e:
-            raise Exception(f"Error processing TXT file: {str(e)}")
-    
-    def _split_text(self, text: str) -> List[str]:
-        """
-        Split text into chunks for processing.
+    def _extract_from_pdf(self, file_path: str) -> str:
+        """Extract text from PDF files"""
+        text = ""
+        with open(file_path, "rb") as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+        return text
         
-        Args:
-            text: The text to split
+    def _extract_from_docx(self, file_path: str) -> str:
+        """Extract text from DOCX files"""
+        doc = Document(file_path)
+        return "\n".join([paragraph.text for paragraph in doc.paragraphs])
+        
+    def _extract_from_txt(self, file_path: str) -> str:
+        """Extract text from TXT files"""
+        with open(file_path, "r", encoding="utf-8") as file:
+            return file.read()
             
-        Returns:
-            List of text chunks
-        """
-        return self.text_splitter.split_text(text) 
+    def _create_chunks(self, text: str) -> List[str]:
+        """Split text into overlapping chunks"""
+        chunks = []
+        start = 0
+        
+        while start < len(text):
+            # Get chunk with overlap
+            end = start + self.chunk_size
+            chunk = text[start:end]
+            
+            # Adjust chunk to end at sentence boundary if possible
+            if end < len(text):
+                last_period = chunk.rfind('.')
+                if last_period != -1:
+                    chunk = chunk[:last_period + 1]
+                    end = start + last_period + 1
+            
+            chunks.append(chunk.strip())
+            
+            # Move start position considering overlap
+            start = end - self.chunk_overlap
+            
+            # Ensure we make progress
+            if start >= len(text) - self.chunk_overlap:
+                break
+        
+        return chunks
+        
+    def _extract_metadata(self, file_path: str, file_type: str) -> Dict[str, Any]:
+        """Extract metadata from the document"""
+        file_stats = os.stat(file_path)
+        
+        metadata = {
+            "file_type": file_type,
+            "file_size": file_stats.st_size,
+            "created_at": file_stats.st_ctime,
+            "modified_at": file_stats.st_mtime
+        }
+        
+        # Add file-type specific metadata
+        if file_type == "pdf":
+            with open(file_path, "rb") as file:
+                pdf = PyPDF2.PdfReader(file)
+                metadata.update({
+                    "page_count": len(pdf.pages),
+                    "pdf_info": pdf.metadata if pdf.metadata else {}
+                })
+        elif file_type == "docx":
+            doc = Document(file_path)
+            metadata.update({
+                "paragraph_count": len(doc.paragraphs),
+                "word_count": sum(len(p.text.split()) for p in doc.paragraphs)
+            })
+            
+        return metadata
+        
+    def validate_file_type(self, filename: str) -> bool:
+        """Check if the file type is supported"""
+        extension = filename.lower().split('.')[-1]
+        return extension in settings.ALLOWED_FILE_TYPES

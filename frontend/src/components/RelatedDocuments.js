@@ -18,6 +18,7 @@ import {
   InsertDriveFile as FileIcon,
   ArrowForward as ArrowForwardIcon,
 } from '@mui/icons-material';
+import { getRelatedDocuments } from '../services/api';
 
 // Demo related documents data (will be replaced with API call)
 const DEMO_RELATED_DOCS = [
@@ -60,19 +61,9 @@ const RelatedDocuments = ({ documentId }) => {
   useEffect(() => {
     const fetchRelatedDocuments = async () => {
       try {
-        setLoading(true);
-        
-        // In a real implementation, we would fetch this data from the API
-        // const response = await getRelatedDocuments(documentId);
-        // setRelatedDocs(response);
-        
-        // Using demo data for now
-        // Simulate API call delay
-        setTimeout(() => {
-          setRelatedDocs(DEMO_RELATED_DOCS);
-          setLoading(false);
-        }, 1000);
-        
+        const response = await getRelatedDocuments(documentId);
+        setRelatedDocs(response);
+        setLoading(false);
       } catch (error) {
         console.error('Error fetching related documents:', error);
         setError('Failed to load related documents');
@@ -80,7 +71,9 @@ const RelatedDocuments = ({ documentId }) => {
       }
     };
 
-    fetchRelatedDocuments();
+    if (documentId) {
+      fetchRelatedDocuments();
+    }
   }, [documentId]);
 
   const handleDocumentClick = (docId) => {
@@ -170,4 +163,4 @@ const RelatedDocuments = ({ documentId }) => {
   );
 };
 
-export default RelatedDocuments; 
+export default RelatedDocuments;

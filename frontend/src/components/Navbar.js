@@ -13,11 +13,10 @@ import {
   Home as HomeIcon,
   Description as DescriptionIcon,
   Upload as UploadIcon,
-  Dashboard as DashboardIcon,
   Label as LabelIcon,
-  Login as LoginIcon,
+  Dashboard as DashboardIcon,
 } from '@mui/icons-material';
-import { useAuth, UserButton } from '../App';
+import { useAuth } from '../App';
 
 function Navbar() {
   const { isSignedIn, isAdmin } = useAuth();
@@ -36,18 +35,8 @@ function Navbar() {
     { name: 'Admin', path: '/admin', icon: <DashboardIcon /> },
   ];
   
-  // Public pages (when not signed in)
-  const publicPages = [
-    { name: 'Home', path: '/', icon: <HomeIcon /> },
-    { name: 'Login', path: '/login', icon: <LoginIcon /> },
-  ];
-  
   // Determine which pages to show based on auth status
-  const pages = !isSignedIn 
-    ? publicPages
-    : isAdmin 
-      ? [...commonPages, ...adminPages]
-      : commonPages;
+  const pages = commonPages; // Show only common pages for all users
 
   return (
     <AppBar position="static">
@@ -91,25 +80,11 @@ function Navbar() {
             ))}
           </Box>
 
-          {/* User button */}
-          <Box>
-            {isSignedIn ? (
-              <UserButton />
-            ) : (
-              <Button 
-                component={RouterLink} 
-                to="/login" 
-                color="inherit"
-                startIcon={<LoginIcon />}
-              >
-                Login
-              </Button>
-            )}
-          </Box>
+          {/* Removed UserButton and Login button */}
         </Toolbar>
       </Container>
     </AppBar>
   );
 }
 
-export default Navbar; 
+export default Navbar;

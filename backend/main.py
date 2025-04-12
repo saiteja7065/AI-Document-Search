@@ -1,7 +1,6 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query, Form, Body, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Form, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from typing import List, Optional, Dict
 import os
 import shutil
@@ -11,7 +10,8 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import datetime
 import random
-import jwt
+from gtts import gTTS
+import openai
 
 # Import our modules
 from document_processor import DocumentProcessor
@@ -25,6 +25,9 @@ load_dotenv()
 
 # Determine whether to use mock services
 USE_MOCK_SERVICES = True  # Set this to False when ready to use real Firebase and ChromaDB
+
+# Add OpenAI API key for GPT-based features
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 app = FastAPI(
     title="AI Document Search API",
@@ -41,13 +44,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# OAuth2 scheme for token authentication
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
 # Initialize our core services
 document_processor = DocumentProcessor()
-vector_store = VectorStore(use_mock=USE_MOCK_SERVICES)
-document_store = DocumentStore(use_mock=USE_MOCK_SERVICES)
+vector_store = VectorStore(use_mock=False)
+document_store = DocumentStore(use_mock=False)
 summarizer = DocumentSummarizer()
 
 # Create temporary directory for file uploads
@@ -104,128 +104,16 @@ mock_document_tags = []  # List of (document_id, tag_id) tuples
 # Admin user IDs - in a real app, this would be in a database
 ADMIN_USER_IDS = ["admin", "testuser"]
 
-# Helper functions
-def get_user_id_from_token(token: str) -> str:
-    """
-    Decode JWT token and extract user ID.
-    For development, also accepts "demo_token" as a valid token.
-    """
-    # Accept "demo_token" for development
-    if token == "demo_token":
-        return "demo_user"
-    
-    try:
-        # For development, accept any token with a user_id claim
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-        user_id = payload.get("user_id")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        return user_id
-    except jwt.PyJWTError:
-        # For development, accept demo token
-        if USE_MOCK_SERVICES:
-            return "demo_user"
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-def is_admin_user(user_id: str) -> bool:
-    """Check if the user has admin privileges."""
-    return user_id in ADMIN_USER_IDS
-
-def admin_required(user_id: str):
-    """Verify that the user has admin privileges."""
-    if not is_admin_user(user_id):
-        raise HTTPException(
-            status_code=403,
-            detail="Insufficient permissions. Admin access required."
-        )
-
-@app.middleware("http")
-async def authenticate_requests(request: Request, call_next):
-    """
-    Middleware to authenticate requests.
-    Bypasses authentication for specific routes.
-    """
-    # Skip authentication for these routes
-    skip_auth_paths = ["/", "/docs", "/openapi.json", "/redoc", "/token"]
-    
-    if request.url.path in skip_auth_paths:
-        response = await call_next(request)
-        return response
-    
-    # Check for Authorization header
-    authorization = request.headers.get("Authorization")
-    
-    # For development mode, allow requests without auth
-    if USE_MOCK_SERVICES and not authorization:
-        request.state.user_id = "demo_user"
-        response = await call_next(request)
-        return response
-    
-    if not authorization:
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Authorization header is missing"}
-        )
-    
-    # Extract token
-    try:
-        scheme, token = authorization.split()
-        if scheme.lower() != "bearer":
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid authentication scheme"}
-            )
-    except ValueError:
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Invalid authorization header"}
-        )
-    
-    # Validate token
-    try:
-        user_id = get_user_id_from_token(token)
-        request.state.user_id = user_id
-    except HTTPException as e:
-        return JSONResponse(
-            status_code=e.status_code,
-            content={"detail": e.detail}
-        )
-    
-    response = await call_next(request)
-    return response
-
-# Auth endpoint for testing
-@app.post("/token")
-async def get_token(username: str = Form(...), password: str = Form(...)):
-    """
-    Generate a test token for development.
-    In production, this would validate credentials.
-    """
-    # For development, accept any username/password
-    if username and password:
-        # Create a token with a 24-hour expiration
-        token_data = {
-            "user_id": username,
-            "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24)
-        }
-        token = jwt.encode(token_data, settings.SECRET_KEY, algorithm="HS256")
-        return {"access_token": token, "token_type": "bearer"}
-    
-    raise HTTPException(status_code=401, detail="Invalid credentials")
-
 @app.get("/")
 async def root():
     return {"message": "Welcome to AI Document Search API"}
 
 @app.get("/tags", response_model=List[TagResponse])
-async def get_tags(token: str = Depends(oauth2_scheme)):
+async def get_tags():
     """
     Get all available tags
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # In a real implementation, get tags from database
         # For now, return mock tags
         return [TagResponse(**tag) for tag in mock_tags]
@@ -233,17 +121,11 @@ async def get_tags(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/tags", response_model=TagResponse)
-async def create_tag(
-    tag: TagCreate,
-    token: str = Depends(oauth2_scheme)
-):
+async def create_tag(tag: TagCreate):
     """
     Create a new tag
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Generate a unique ID for the tag
         tag_id = f"tag-{str(uuid.uuid4())[:8]}"
         
@@ -263,17 +145,11 @@ async def create_tag(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/documents/{document_id}/tags", response_model=List[TagResponse])
-async def get_document_tags(
-    document_id: str,
-    token: str = Depends(oauth2_scheme)
-):
+async def get_document_tags(document_id: str):
     """
     Get tags for a specific document
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get document from document store
         document = document_store.get_document(document_id)
         if not document:
@@ -289,18 +165,11 @@ async def get_document_tags(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/documents/{document_id}/tags")
-async def add_tags_to_document(
-    document_id: str,
-    tag_ids: List[str] = Body(...),
-    token: str = Depends(oauth2_scheme)
-):
+async def add_tags_to_document(document_id: str, tag_ids: List[str] = Body(...)):
     """
     Add tags to a document
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get document from document store
         document = document_store.get_document(document_id)
         if not document:
@@ -324,18 +193,11 @@ async def add_tags_to_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/documents/{document_id}/tags/{tag_id}")
-async def remove_tag_from_document(
-    document_id: str,
-    tag_id: str,
-    token: str = Depends(oauth2_scheme)
-):
+async def remove_tag_from_document(document_id: str, tag_id: str):
     """
     Remove a tag from a document
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get document from document store
         document = document_store.get_document(document_id)
         if not document:
@@ -356,17 +218,11 @@ async def remove_tag_from_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/tags/{tag_id}/documents", response_model=List[DocumentResponse])
-async def get_documents_by_tag(
-    tag_id: str,
-    token: str = Depends(oauth2_scheme)
-):
+async def get_documents_by_tag(tag_id: str):
     """
     Get documents with a specific tag
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Validate tag ID
         valid_tag_ids = [tag["id"] for tag in mock_tags]
         if tag_id not in valid_tag_ids:
@@ -395,18 +251,11 @@ async def get_documents_by_tag(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload", response_model=DocumentResponse)
-async def upload_document(
-    file: UploadFile = File(...),
-    title: str = Form(...),
-    token: str = Depends(oauth2_scheme)
-):
+async def upload_document(file: UploadFile = File(...), title: str = Form(...)):
     """
     Upload a document for processing and indexing
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Check file type
         file_extension = os.path.splitext(file.filename)[1].lower()
         if file_extension not in ['.pdf', '.docx', '.txt']:
@@ -429,7 +278,7 @@ async def upload_document(
                 file_path=temp_file_path,
                 title=title,
                 metadata=processed_data['metadata'],
-                user_id=user_id
+                user_id="demo_user"
             )
             
             # Add document to vector store for search
@@ -448,7 +297,7 @@ async def upload_document(
                 file_url=doc_metadata.get('fileUrl', ''),
                 file_type=doc_metadata.get('fileType', ''),
                 uploaded_at=str(doc_metadata.get('uploadedAt', '')),
-                uploaded_by=user_id
+                uploaded_by="demo_user"
             )
         finally:
             # Clean up temporary file
@@ -459,18 +308,11 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/search", response_model=List[SearchResponse])
-async def search_documents(
-    query: str = Body(..., embed=True),
-    limit: int = Body(5, embed=True),
-    token: str = Depends(oauth2_scheme)
-):
+async def search_documents(query: str = Body(..., embed=True), limit: int = Body(5, embed=True)):
     """
     Search documents using natural language query
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Search in vector store
         search_results = vector_store.search(query=query, limit=limit)
         
@@ -495,19 +337,13 @@ async def search_documents(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/documents", response_model=List[DocumentResponse])
-async def get_documents(
-    token: str = Depends(oauth2_scheme),
-    limit: int = Query(50)
-):
+async def get_documents(limit: int = Query(50)):
     """
     Get a list of documents
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get documents from document store
-        documents = document_store.get_documents(user_id=user_id, limit=limit)
+        documents = document_store.get_documents(user_id="demo_user", limit=limit)
         
         # Format results
         return [
@@ -525,17 +361,11 @@ async def get_documents(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/documents/{document_id}")
-async def get_document(
-    document_id: str,
-    token: str = Depends(oauth2_scheme)
-):
+async def get_document(document_id: str):
     """
     Get a specific document
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get document from document store
         document = document_store.get_document(document_id)
         
@@ -547,19 +377,11 @@ async def get_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/documents/{document_id}/summary", response_model=SummaryResponse)
-async def get_document_summary(
-    document_id: str,
-    summary_type: str = Query("general"),
-    max_tokens: int = Query(500),
-    token: str = Depends(oauth2_scheme)
-):
+async def get_document_summary(document_id: str, summary_type: str = Query("general"), max_tokens: int = Query(500)):
     """
     Generate a summary for a specific document
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get document from document store
         document = document_store.get_document(document_id)
         
@@ -597,17 +419,11 @@ async def get_document_summary(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/documents/{document_id}")
-async def delete_document(
-    document_id: str,
-    token: str = Depends(oauth2_scheme)
-):
+async def delete_document(document_id: str):
     """
     Delete a document
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get document to check if it exists
         document = document_store.get_document(document_id)
         
@@ -628,20 +444,11 @@ async def delete_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/admin/documents", response_model=List[DocumentResponse])
-async def admin_get_documents(
-    token: str = Depends(oauth2_scheme),
-    limit: int = Query(50)
-):
+async def admin_get_documents(limit: int = Query(50)):
     """
     Admin endpoint to get all documents
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
-        # Verify admin access
-        admin_required(user_id)
-        
         # Get documents from document store without filtering by user
         documents = document_store.get_documents(limit=limit)
         
@@ -660,101 +467,12 @@ async def admin_get_documents(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/admin/users")
-async def admin_get_users(
-    token: str = Depends(oauth2_scheme)
-):
-    """
-    Admin endpoint to get all users
-    """
-    try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
-        # Verify admin access
-        admin_required(user_id)
-        
-        # In a real app, this would query a user database
-        # For mock implementation, return a fixed list of users
-        mock_users = [
-            {
-                "id": "user-123",
-                "username": "demo_user",
-                "email": "demo@example.com",
-                "is_admin": False,
-                "created_at": "2023-01-01T12:00:00Z",
-                "document_count": 5
-            },
-            {
-                "id": "user-456",
-                "username": "admin",
-                "email": "admin@example.com",
-                "is_admin": True,
-                "created_at": "2023-01-01T10:00:00Z",
-                "document_count": 3
-            },
-            {
-                "id": "user-789",
-                "username": "testuser",
-                "email": "test@example.com",
-                "is_admin": True,
-                "created_at": "2023-01-05T14:30:00Z",
-                "document_count": 2
-            }
-        ]
-        
-        return mock_users
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/admin/documents/{document_id}")
-async def admin_delete_document(
-    document_id: str,
-    token: str = Depends(oauth2_scheme)
-):
-    """
-    Admin endpoint to delete any document
-    """
-    try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
-        # Verify admin access
-        admin_required(user_id)
-        
-        # Get document to check if it exists
-        document = document_store.get_document(document_id)
-        
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
-        
-        # Delete from vector store
-        vector_store.delete_document(document_id)
-        
-        # Delete from document store
-        success = document_store.delete_document(document_id)
-        
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to delete document")
-        
-        return {"message": f"Document {document_id} deleted successfully by admin"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/admin/stats")
-async def admin_get_stats(
-    token: str = Depends(oauth2_scheme)
-):
+async def admin_get_stats():
     """
     Admin endpoint to get detailed system statistics
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
-        # Verify admin access
-        admin_required(user_id)
-        
         # Get all documents
         documents = document_store.get_documents(limit=1000)
         
@@ -797,18 +515,12 @@ async def admin_get_stats(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/documents/{document_id}/insights")
-async def get_document_insights(
-    document_id: str,
-    token: str = Depends(oauth2_scheme)
-):
+async def get_document_insights(document_id: str):
     """
     Get insights from a document such as sentiment analysis,
     readability metrics, and topic modeling
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get document from document store
         document = document_store.get_document(document_id)
         if not document:
@@ -865,18 +577,11 @@ async def get_document_insights(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/documents/{document_id}/related")
-async def get_related_documents(
-    document_id: str,
-    limit: int = Query(3),
-    token: str = Depends(oauth2_scheme)
-):
+async def get_related_documents(document_id: str, limit: int = Query(3)):
     """
     Get documents related to the specified document
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get document from document store
         document = document_store.get_document(document_id)
         if not document:
@@ -908,18 +613,11 @@ async def get_related_documents(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/documents/{document_id}/ask")
-async def ask_document_question(
-    document_id: str,
-    question: str = Body(..., embed=True),
-    token: str = Depends(oauth2_scheme)
-):
+async def ask_document_question(document_id: str, question: str = Body(..., embed=True)):
     """
     Ask a question about a document and get an answer
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get document from document store
         document = document_store.get_document(document_id)
         if not document:
@@ -944,16 +642,12 @@ async def get_enhanced_document_summary(
     include_key_points: bool = Query(True),
     include_tags: bool = Query(True),
     include_entities: bool = Query(True),
-    max_length: int = Query(1000),
-    token: str = Depends(oauth2_scheme)
+    max_length: int = Query(1000)
 ):
     """
     Generate an enhanced summary of a document with additional insights
     """
     try:
-        # Get user ID from token
-        user_id = get_user_id_from_token(token)
-        
         # Get document from document store
         document = document_store.get_document(document_id)
         if not document:
@@ -963,8 +657,7 @@ async def get_enhanced_document_summary(
         summary_response = await get_document_summary(
             document_id=document_id,
             summary_type="detailed",
-            max_tokens=max_length,
-            token=token
+            max_tokens=max_length
         )
         
         # Create enhanced summary response
@@ -1014,6 +707,87 @@ async def get_enhanced_document_summary(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/documents/{document_id}/key-points")
+async def generate_key_points(document_id: str):
+    """
+    Generate key points for a document
+    """
+    try:
+        document = document_store.get_document(document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Use OpenAI to generate key points
+        response = openai.Completion.create(
+            engine="text-davinci-003",
+            prompt=f"Extract key points from the following document:\n{document['content']}",
+            max_tokens=150
+        )
+        key_points = response.choices[0].text.strip().split("\n")
+
+        return {"document_id": document_id, "key_points": key_points}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/documents/{document_id}/generate-slides")
+async def generate_slides(document_id: str):
+    """
+    Generate slides for a document
+    """
+    try:
+        document = document_store.get_document(document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Use OpenAI to generate slide content
+        response = openai.Completion.create(
+            engine="text-davinci-003",
+            prompt=f"Create slide content for the following document:\n{document['content']}",
+            max_tokens=300
+        )
+        slides = response.choices[0].text.strip().split("\n\n")
+
+        return {"document_id": document_id, "slides": slides}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/documents/{document_id}/generate-image")
+async def generate_image(document_id: str, description: str = Body(...)):
+    """
+    Generate an image based on the document content
+    """
+    try:
+        # Use OpenAI DALL-E to generate an image
+        response = openai.Image.create(
+            prompt=description,
+            n=1,
+            size="512x512"
+        )
+        image_url = response['data'][0]['url']
+
+        return {"document_id": document_id, "image_url": image_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/documents/{document_id}/voice")
+async def generate_voice(document_id: str):
+    """
+    Generate voice narration for a document
+    """
+    try:
+        document = document_store.get_document(document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Use gTTS to generate voice
+        tts = gTTS(text=document['content'], lang='en')
+        temp_file = f"temp/{document_id}.mp3"
+        tts.save(temp_file)
+
+        return FileResponse(temp_file, media_type="audio/mpeg", filename=f"{document_id}.mp3")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,96 +1,124 @@
+from typing import Dict, Any
+from langchain.chat_models import ChatOpenAI
+from langchain.chains.summarize import load_summarize_chain
+from langchain.docstore.document import Document
+from langchain.prompts import PromptTemplate
 import os
-from typing import Dict, List, Optional
-from openai import OpenAI
 from config import settings
 
 class DocumentSummarizer:
-    """
-    Generates summaries for documents using OpenAI's GPT models.
-    """
-    
-    def __init__(self, api_key: str = None, model: str = "gpt-3.5-turbo"):
-        """
-        Initialize the document summarizer.
+    def __init__(self):
+        self.llm = ChatOpenAI(
+            temperature=0,
+            model_name="gpt-3.5-turbo-16k",
+            openai_api_key=settings.OPENAI_API_KEY
+        )
         
-        Args:
-            api_key: OpenAI API key
-            model: Model to use for summarization
-        """
-        self.api_key = api_key or settings.OPENAI_API_KEY
-        self.model = model
-        self.client = OpenAI(api_key=self.api_key)
-    
-    def summarize(self, text: str, max_tokens: int = 500, summary_type: str = "general") -> str:
-        """
-        Generate a summary of the provided text.
-        
-        Args:
-            text: The text to summarize
-            max_tokens: Maximum tokens for the summary
-            summary_type: Type of summary to generate (general, key_points, detailed)
+        # Custom prompt for better summaries
+        self.summary_prompt = PromptTemplate(
+            input_variables=["text"],
+            template="""Create a comprehensive summary of the following text. Include:
+            1. Main topics and key points
+            2. Important findings or conclusions
+            3. Any significant data or statistics
             
-        Returns:
-            Generated summary as a string
-        """
-        # Handle long texts by truncating if necessary
-        # OpenAI models have context limits
-        if len(text) > 12000:
-            text = text[:12000] + "..."
+            Text: {text}
+            
+            Summary:"""
+        )
         
-        # Create prompt based on summary type
-        if summary_type == "key_points":
-            prompt = (
-                "Extract and list the key points from this document in bullet point format:\n\n"
-                f"{text}\n\n"
-                "Key points:"
-            )
-        elif summary_type == "detailed":
-            prompt = (
-                "Generate a detailed summary of this document, preserving the most important information "
-                "and maintaining the original structure:\n\n"
-                f"{text}\n\n"
-                "Detailed summary:"
-            )
-        else:  # general summary
-            prompt = (
-                "Please summarize the following document in a concise way, highlighting the main points "
-                "and important information:\n\n"
-                f"{text}\n\n"
-                "Summary:"
-            )
+    def generate_summary(self, text: str, summary_type: str = "general", max_tokens: int = 500) -> Dict[str, Any]:
+        """Generate a summary of the document"""
+        try:
+            # Split text into chunks if it's too long
+            docs = [Document(page_content=chunk) for chunk in self._split_text(text)]
+            
+            # Choose summarization strategy based on summary type
+            if summary_type == "bullet_points":
+                summary_chain = self._create_bullet_point_chain()
+            else:
+                summary_chain = self._create_general_chain()
+                
+            # Generate summary
+            summary = summary_chain.run(docs)
+            
+            # Extract key points
+            key_points = self._extract_key_points(summary)
+            
+            return {
+                "summary": summary,
+                "key_points": key_points,
+                "word_count": len(summary.split()),
+                "summary_type": summary_type
+            }
+            
+        except Exception as e:
+            return {
+                "error": str(e),
+                "summary": "Failed to generate summary",
+                "key_points": []
+            }
+            
+    def _split_text(self, text: str, max_chunk_size: int = 4000) -> list:
+        """Split text into chunks for processing"""
+        words = text.split()
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        
+        for word in words:
+            word_size = len(word) + 1  # +1 for space
+            if current_size + word_size > max_chunk_size:
+                chunks.append(" ".join(current_chunk))
+                current_chunk = [word]
+                current_size = word_size
+            else:
+                current_chunk.append(word)
+                current_size += word_size
+                
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+            
+        return chunks
+        
+    def _create_general_chain(self):
+        """Create a chain for general summarization"""
+        return load_summarize_chain(
+            llm=self.llm,
+            chain_type="map_reduce",
+            map_prompt=self.summary_prompt,
+            combine_prompt=self.summary_prompt,
+            verbose=False
+        )
+        
+    def _create_bullet_point_chain(self):
+        """Create a chain for bullet point summarization"""
+        bullet_prompt = PromptTemplate(
+            input_variables=["text"],
+            template="""Extract the main points from the following text as a bulleted list:
+            
+            Text: {text}
+            
+            Main Points:"""
+        )
+        return load_summarize_chain(
+            llm=self.llm,
+            chain_type="map_reduce",
+            map_prompt=bullet_prompt,
+            combine_prompt=bullet_prompt,
+            verbose=False
+        )
+        
+    def _extract_key_points(self, summary: str) -> list:
+        """Extract key points from the summary"""
+        prompt = f"""Extract 3-5 key points from this summary as a list:
+        {summary}
+        """
         
         try:
-            # Call OpenAI API
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that summarizes documents accurately and concisely."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=max_tokens,
-                temperature=0.5,  # Lower temperature for more focused summary
-            )
-            
-            # Extract and return summary
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            print(f"Error generating summary: {str(e)}")
-            return "Error generating summary. Please try again."
-    
-    def summarize_chunks(self, chunks: List[str], max_tokens: int = 500, summary_type: str = "general") -> str:
-        """
-        Generate a summary from multiple document chunks.
-        
-        Args:
-            chunks: List of text chunks to summarize
-            max_tokens: Maximum tokens for the summary
-            summary_type: Type of summary to generate
-            
-        Returns:
-            Generated summary as a string
-        """
-        # Combine chunks into a single text
-        combined_text = " ".join(chunks)
-        
-        # Generate summary
-        return self.summarize(combined_text, max_tokens, summary_type) 
+            response = self.llm.predict(prompt)
+            # Split by newlines and clean up
+            points = [p.strip().lstrip('•-*').strip() for p in response.split('\n') if p.strip()]
+            return points[:5]  # Limit to 5 points
+        except:
+            return []

@@ -27,11 +27,11 @@ const theme = createTheme({
 });
 
 // Authentication context
-const AuthContext = createContext();
+export const AuthContext = createContext();
 
 export const useAuth = () => useContext(AuthContext);
 
-function AuthProvider({ children }) {
+export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   
@@ -191,4 +191,4 @@ function App() {
   );
 }
 
-export default App; 
+export default App;

@@ -15,17 +15,8 @@ const api = axios.create({
   }
 });
 
-// Add authentication token to requests
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('auth_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+// Removed the interceptor that adds the auth token to requests
+api.interceptors.request.use(null, (error) => Promise.reject(error));
 
 // Fallback to mock implementation if backend request fails
 const withFallback = async (apiCall, mockFunction, ...args) => {
@@ -34,26 +25,6 @@ const withFallback = async (apiCall, mockFunction, ...args) => {
   } catch (error) {
     console.warn('API call failed, using mock data:', error);
     return mockFunction(...args);
-  }
-};
-
-/**
- * Get a login token for testing
- * @param {string} username - Username
- * @param {string} password - Password
- * @returns {Promise<Object>} - Token response
- */
-export const getLoginToken = async (username, password) => {
-  try {
-    const formData = new FormData();
-    formData.append('username', username);
-    formData.append('password', password);
-    
-    const response = await api.post('/token', formData);
-    return response.data;
-  } catch (error) {
-    console.error('Error getting login token:', error);
-    throw error;
   }
 };
 
@@ -366,9 +337,73 @@ export const getDocumentInsights = async (documentId) => {
   }
 };
 
+/**
+ * Generate key points for a document
+ * @param {string} documentId - The document ID
+ * @returns {Promise<Object>} - Key points object
+ */
+export const generateKeyPoints = async (documentId) => {
+  try {
+    const response = await api.post(`/documents/${documentId}/key-points`);
+    return response.data;
+  } catch (error) {
+    console.error('Error generating key points:', error);
+    throw error;
+  }
+};
+
+/**
+ * Generate slides for a document
+ * @param {string} documentId - The document ID
+ * @returns {Promise<Object>} - Slides object
+ */
+export const generateSlides = async (documentId) => {
+  try {
+    const response = await api.post(`/documents/${documentId}/generate-slides`);
+    return response.data;
+  } catch (error) {
+    console.error('Error generating slides:', error);
+    throw error;
+  }
+};
+
+/**
+ * Generate an image based on document content
+ * @param {string} documentId - The document ID
+ * @param {string} description - Image description
+ * @returns {Promise<Object>} - Generated image URL
+ */
+export const generateImage = async (documentId, description) => {
+  try {
+    const response = await api.post(`/documents/${documentId}/generate-image`, {
+      description
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error generating image:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get voice narration for a document
+ * @param {string} documentId - The document ID
+ * @returns {Promise<Blob>} - Audio file blob
+ */
+export const getVoiceNarration = async (documentId) => {
+  try {
+    const response = await api.post(`/documents/${documentId}/voice`, {
+      responseType: 'blob'
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error getting voice narration:', error);
+    throw error;
+  }
+};
+
 // Export default object with all API functions
 export default {
-  getLoginToken,
   searchDocuments,
   getDocument,
   getDocumentSummary,
@@ -388,5 +423,9 @@ export default {
   searchDocumentsByTag,
   getEnhancedDocumentSummary,
   getDocumentInsights,
-  uploadDocument
-}; 
+  uploadDocument,
+  generateKeyPoints,
+  generateSlides,
+  generateImage,
+  getVoiceNarration
+};

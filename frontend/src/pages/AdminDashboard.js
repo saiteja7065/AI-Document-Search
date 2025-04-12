@@ -74,7 +74,7 @@ function TabPanel(props) {
   );
 }
 
-function AdminDashboard() {
+const AdminDashboard = () => {
   const navigate = useNavigate();
   const [documents, setDocuments] = useState([]);
   const [users, setUsers] = useState([]);
@@ -423,6 +423,6 @@ function AdminDashboard() {
       </Paper>
     </Container>
   );
-}
+};
 
-export default AdminDashboard; 
+export default AdminDashboard;
